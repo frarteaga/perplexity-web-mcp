@@ -109,8 +109,16 @@ def _prepare_direct_mcp_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized_params["source"] = "default"
     normalized_params["always_search_override"] = False
     normalized_params["override_no_search"] = False
-    normalized_params["should_ask_for_mcp_tool_confirmation"] = True
-    normalized_params["supports_tool_approval_modal"] = True
+
+    # The browser can surface an MCP approval modal; the CLI cannot. Advertising
+    # modal support leaves direct connector runs parked at an approval workflow
+    # step with no final answer. For pwm/MCP transport we therefore request the
+    # connector call directly and explicitly report that no approval modal is
+    # available. Mutating GitHub operations should be guarded at a higher-level
+    # CLI/MCP confirmation layer before broad write support is enabled.
+    normalized_params["should_ask_for_mcp_tool_confirmation"] = False
+    normalized_params["supports_tool_approval_modal"] = False
+
     normalized_params["force_enable_browser_agent"] = False
     normalized_params["supported_features"] = ["browser_agent_permission_banner_v1.1"]
     normalized_params["extended_context"] = False
