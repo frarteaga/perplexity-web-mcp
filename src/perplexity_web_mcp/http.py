@@ -25,15 +25,49 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _GITHUB_DIRECT_CONNECTOR_ID = "github_mcp_direct"
+_DIRECT_MCP_SUPPORTED_BLOCK_USE_CASES = [
+    "answer_modes",
+    "media_items",
+    "knowledge_cards",
+    "inline_entity_cards",
+    "place_widgets",
+    "finance_widgets",
+    "sports_widgets",
+    "news_widgets",
+    "shopping_widgets",
+    "jobs_widgets",
+    "search_result_widgets",
+    "inline_images",
+    "inline_assets",
+    "placeholder_cards",
+    "diff_blocks",
+    "inline_knowledge_cards",
+    "entity_group_v2",
+    "refinement_filters",
+    "canvas_mode",
+    "maps_preview",
+    "answer_tabs",
+    "price_comparison_widgets",
+    "preserve_latex",
+    "generic_onboarding_widgets",
+    "in_context_suggestions",
+    "pending_followups",
+    "inline_claims",
+    "unified_assets",
+    "workflow_steps",
+    "workflow_widgets",
+    "navigation_results",
+    "background_agents",
+]
 
 
 def _prepare_direct_mcp_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Translate direct MCP connector sources to Perplexity Web mention semantics.
+    """Translate GitHub direct MCP routing to Perplexity Web semantics.
 
     Perplexity Web represents the GitHub direct connector as a ``mentions``
-    entry while keeping ``sources`` on ``web``.  Connector discovery exposes
-    the same ID to the CLI, but sending that ID directly in ``sources`` does
-    not activate the GitHub tools.
+    entry while keeping ``sources`` on ``web``. Connector-enabled browser
+    requests also run outside incognito mode and use the schematized response
+    format that carries workflow/tool blocks.
 
     Keep this narrowly scoped to the observed GitHub direct connector so
     retrieval-style connectors such as ``*_mcp_cashmere`` and ``*_mcp_merge``
@@ -63,11 +97,25 @@ def _prepare_direct_mcp_payload(payload: dict[str, Any]) -> dict[str, Any]:
         )
     normalized_params["mentions"] = mentions
 
-    # Match the connector-capable browser request shape. Read-only GitHub
-    # operations do not normally need approval; mutating tools can still ask
-    # Perplexity for confirmation rather than being silently auto-approved.
-    normalized_params.setdefault("should_ask_for_mcp_tool_confirmation", True)
-    normalized_params.setdefault("supports_tool_approval_modal", True)
+    # Match the connector-capable browser request captured from Perplexity Web.
+    # Account connectors are not available in the normal pwm incognito request,
+    # and MCP workflow/tool events use the schematized response path.
+    normalized_params["is_incognito"] = False
+    normalized_params["use_schematized_api"] = True
+    normalized_params["send_back_text_in_streaming_api"] = False
+    normalized_params["supported_block_use_cases"] = list(_DIRECT_MCP_SUPPORTED_BLOCK_USE_CASES)
+    normalized_params["skip_search_enabled"] = True
+    normalized_params["is_nav_suggestions_disabled"] = False
+    normalized_params["source"] = "default"
+    normalized_params["always_search_override"] = False
+    normalized_params["override_no_search"] = False
+    normalized_params["should_ask_for_mcp_tool_confirmation"] = True
+    normalized_params["supports_tool_approval_modal"] = True
+    normalized_params["force_enable_browser_agent"] = False
+    normalized_params["supported_features"] = ["browser_agent_permission_banner_v1.1"]
+    normalized_params["extended_context"] = False
+    normalized_params["is_local_browser_available"] = False
+    normalized_params["is_local_browser_allowed"] = False
 
     normalized_payload = {**payload, "params": normalized_params}
     query_str = normalized_payload.get("query_str")
