@@ -33,8 +33,8 @@ def test_github_direct_connector_uses_web_mention_shape() -> None:
     assert "workflow_steps" in normalized["params"]["supported_block_use_cases"]
     assert "workflow_widgets" in normalized["params"]["supported_block_use_cases"]
     assert normalized["params"]["skip_search_enabled"] is True
-    assert normalized["params"]["should_ask_for_mcp_tool_confirmation"] is True
-    assert normalized["params"]["supports_tool_approval_modal"] is True
+    assert normalized["params"]["should_ask_for_mcp_tool_confirmation"] is False
+    assert normalized["params"]["supports_tool_approval_modal"] is False
     assert normalized["query_str"] == "@GitHub lista mis repos"
 
     # The transport normalization must not mutate the caller's payload.
