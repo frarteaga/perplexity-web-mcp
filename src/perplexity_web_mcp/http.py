@@ -24,6 +24,58 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_GITHUB_DIRECT_CONNECTOR_ID = "github_mcp_direct"
+
+
+def _prepare_direct_mcp_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Translate direct MCP connector sources to Perplexity Web mention semantics.
+
+    Perplexity Web represents the GitHub direct connector as a ``mentions``
+    entry while keeping ``sources`` on ``web``.  Connector discovery exposes
+    the same ID to the CLI, but sending that ID directly in ``sources`` does
+    not activate the GitHub tools.
+
+    Keep this narrowly scoped to the observed GitHub direct connector so
+    retrieval-style connectors such as ``*_mcp_cashmere`` and ``*_mcp_merge``
+    preserve their existing source behavior.
+    """
+    params = payload.get("params")
+    if not isinstance(params, dict):
+        return payload
+
+    raw_sources = params.get("sources")
+    if not isinstance(raw_sources, list) or _GITHUB_DIRECT_CONNECTOR_ID not in raw_sources:
+        return payload
+
+    normalized_params = dict(params)
+    sources = [source for source in raw_sources if source != _GITHUB_DIRECT_CONNECTOR_ID]
+    normalized_params["sources"] = sources or ["web"]
+
+    raw_mentions = params.get("mentions")
+    mentions = list(raw_mentions) if isinstance(raw_mentions, list) else []
+    if not any(isinstance(mention, dict) and mention.get("id") == _GITHUB_DIRECT_CONNECTOR_ID for mention in mentions):
+        mentions.append(
+            {
+                "id": _GITHUB_DIRECT_CONNECTOR_ID,
+                "url": "",
+                "type": "sources",
+            }
+        )
+    normalized_params["mentions"] = mentions
+
+    # Match the connector-capable browser request shape. Read-only GitHub
+    # operations do not normally need approval; mutating tools can still ask
+    # Perplexity for confirmation rather than being silently auto-approved.
+    normalized_params.setdefault("should_ask_for_mcp_tool_confirmation", True)
+    normalized_params.setdefault("supports_tool_approval_modal", True)
+
+    normalized_payload = {**payload, "params": normalized_params}
+    query_str = normalized_payload.get("query_str")
+    if isinstance(query_str, str) and not query_str.lstrip().lower().startswith("@github"):
+        normalized_payload["query_str"] = f"@GitHub {query_str}"
+
+    return normalized_payload
+
 
 class HTTPClient:
     """HTTP client with retry, rate limiting, and error handling."""
@@ -284,7 +336,7 @@ class HTTPClient:
     def stream_ask(self, payload: dict[str, Any]) -> Generator[bytes, None, None]:
         """Stream a prompt request to the ask endpoint."""
 
-        yield from self.stream_lines(ENDPOINT_ASK, json=payload)
+        yield from self.stream_lines(ENDPOINT_ASK, json=_prepare_direct_mcp_payload(payload))
 
     def close(self) -> None:
         """Close the HTTP session."""
