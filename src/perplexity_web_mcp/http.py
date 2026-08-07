@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from time import monotonic
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from curl_cffi.requests import Response as CurlResponse
 from curl_cffi.requests import Session
@@ -110,14 +111,11 @@ def _prepare_direct_mcp_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized_params["always_search_override"] = False
     normalized_params["override_no_search"] = False
 
-    # The browser can surface an MCP approval modal; the CLI cannot. Advertising
-    # modal support leaves direct connector runs parked at an approval workflow
-    # step with no final answer. For pwm/MCP transport we therefore request the
-    # connector call directly and explicitly report that no approval modal is
-    # available. Mutating GitHub operations should be guarded at a higher-level
-    # CLI/MCP confirmation layer before broad write support is enabled.
-    normalized_params["should_ask_for_mcp_tool_confirmation"] = False
-    normalized_params["supports_tool_approval_modal"] = False
+    # Match the browser request's declared MCP-confirmation capabilities. These
+    # flags do not force a modal by themselves; they tell the backend that the
+    # client understands the connector approval workflow when one is required.
+    normalized_params["should_ask_for_mcp_tool_confirmation"] = True
+    normalized_params["supports_tool_approval_modal"] = True
 
     normalized_params["force_enable_browser_agent"] = False
     normalized_params["supported_features"] = ["browser_agent_permission_banner_v1.1"]
@@ -125,12 +123,40 @@ def _prepare_direct_mcp_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized_params["is_local_browser_available"] = False
     normalized_params["is_local_browser_allowed"] = False
 
+    # Perplexity Web supplies a frontend request UUID in the payload and uses
+    # the same value as the x-request-id header on the ask request. Preserve an
+    # explicit caller value for deterministic tests/replays, otherwise create a
+    # fresh UUID for this connector request.
+    frontend_uuid = normalized_params.get("frontend_uuid")
+    if not isinstance(frontend_uuid, str) or not frontend_uuid.strip():
+        frontend_uuid = str(uuid4())
+    normalized_params["frontend_uuid"] = frontend_uuid
+
     normalized_payload = {**payload, "params": normalized_params}
     query_str = normalized_payload.get("query_str")
     if isinstance(query_str, str) and not query_str.lstrip().lower().startswith("@github"):
         normalized_payload["query_str"] = f"@GitHub {query_str}"
 
     return normalized_payload
+
+
+def _direct_mcp_request_headers(payload: dict[str, Any]) -> dict[str, str] | None:
+    """Return browser-compatible request identity headers for direct MCP asks."""
+    params = payload.get("params")
+    if not isinstance(params, dict):
+        return None
+
+    mentions = params.get("mentions")
+    if not isinstance(mentions, list) or not any(
+        isinstance(mention, dict) and mention.get("id") == _GITHUB_DIRECT_CONNECTOR_ID for mention in mentions
+    ):
+        return None
+
+    frontend_uuid = params.get("frontend_uuid")
+    if not isinstance(frontend_uuid, str) or not frontend_uuid:
+        return None
+
+    return {"x-request-id": frontend_uuid}
 
 
 class HTTPClient:
@@ -298,8 +324,9 @@ class HTTPClient:
         endpoint: str,
         json: dict[str, Any] | None = None,
         stream: bool = False,
+        headers: dict[str, str] | None = None,
     ) -> CurlResponse:
-        """Make a POST request with retry and rate limiting."""
+        """Make a POST request with retry, rate limiting, and optional headers."""
 
         url = f"{API_BASE_URL}{endpoint}" if endpoint.startswith("/") else endpoint
         log_request("POST", url, body_size=len(str(json)) if json else 0)
@@ -312,7 +339,7 @@ class HTTPClient:
             request_start = monotonic()
 
             try:
-                response = self._session.post(url, json=json, stream=stream)
+                response = self._session.post(url, json=json, stream=stream, headers=headers)
                 elapsed_ms = (monotonic() - request_start) * 1000
                 log_response("POST", url, response.status_code, elapsed_ms=elapsed_ms)
 
@@ -326,10 +353,15 @@ class HTTPClient:
 
         return _do_post()
 
-    def stream_lines(self, endpoint: str, json: dict[str, Any]) -> Generator[bytes, None, None]:
+    def stream_lines(
+        self,
+        endpoint: str,
+        json: dict[str, Any],
+        headers: dict[str, str] | None = None,
+    ) -> Generator[bytes, None, None]:
         """Make a streaming POST request and yield lines."""
 
-        response = self.post(endpoint, json=json, stream=True)
+        response = self.post(endpoint, json=json, stream=True, headers=headers)
 
         try:
             yield from response.iter_lines()
@@ -392,7 +424,9 @@ class HTTPClient:
     def stream_ask(self, payload: dict[str, Any]) -> Generator[bytes, None, None]:
         """Stream a prompt request to the ask endpoint."""
 
-        yield from self.stream_lines(ENDPOINT_ASK, json=_prepare_direct_mcp_payload(payload))
+        normalized_payload = _prepare_direct_mcp_payload(payload)
+        request_headers = _direct_mcp_request_headers(normalized_payload)
+        yield from self.stream_lines(ENDPOINT_ASK, json=normalized_payload, headers=request_headers)
 
     def close(self) -> None:
         """Close the HTTP session."""
