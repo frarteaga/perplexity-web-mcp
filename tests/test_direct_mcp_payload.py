@@ -10,6 +10,9 @@ def test_github_direct_connector_uses_web_mention_shape() -> None:
         "params": {
             "sources": ["github_mcp_direct"],
             "search_focus": "internet",
+            "is_incognito": True,
+            "use_schematized_api": False,
+            "send_back_text_in_streaming_api": True,
         },
         "query_str": "lista mis repos",
     }
@@ -24,12 +27,21 @@ def test_github_direct_connector_uses_web_mention_shape() -> None:
             "type": "sources",
         }
     ]
+    assert normalized["params"]["is_incognito"] is False
+    assert normalized["params"]["use_schematized_api"] is True
+    assert normalized["params"]["send_back_text_in_streaming_api"] is False
+    assert "workflow_steps" in normalized["params"]["supported_block_use_cases"]
+    assert "workflow_widgets" in normalized["params"]["supported_block_use_cases"]
+    assert normalized["params"]["skip_search_enabled"] is True
     assert normalized["params"]["should_ask_for_mcp_tool_confirmation"] is True
     assert normalized["params"]["supports_tool_approval_modal"] is True
     assert normalized["query_str"] == "@GitHub lista mis repos"
 
     # The transport normalization must not mutate the caller's payload.
     assert payload["params"]["sources"] == ["github_mcp_direct"]
+    assert payload["params"]["is_incognito"] is True
+    assert payload["params"]["use_schematized_api"] is False
+    assert payload["params"]["send_back_text_in_streaming_api"] is True
     assert "mentions" not in payload["params"]
     assert payload["query_str"] == "lista mis repos"
 
